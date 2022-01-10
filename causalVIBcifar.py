@@ -31,11 +31,12 @@ class VGG_VIB(nn.Module):
         super(VGG_VIB, self).__init__()
         self.beta = 0.001
         self.num_class = 10
-        self.z_dim = 128
+        self.z_dim = 256
         self.num_sample = 12
         self.device = device
         self.batch_size = 100
         self.prior = Normal(torch.zeros(1, self.z_dim).to(self.device), torch.ones(1, self.z_dim).to(self.device))
+
         # conv1
         self.conv1_1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
         self.relu1_1 = nn.ReLU(inplace=True)
@@ -77,9 +78,11 @@ class VGG_VIB(nn.Module):
         self.relu5_3 = nn.ReLU(inplace=True)
         self.pool5 = nn.MaxPool2d(kernel_size=2, stride=2)
 
-        self.Encoder = nn.Sequential(nn.Linear(in_features=512, out_features=512),
+        self.Encoder = nn.Sequential(nn.Linear(in_features=512, out_features=1024),
                                      nn.ReLU(),
-                                     nn.Linear(in_features=512, out_features=2 * self.z_dim))
+                                     nn.Linear(in_features=1024, out_features=1024),
+                                     nn.ReLU(),
+                                     nn.Linear(in_features=1024, out_features=2 * self.z_dim),)
 
         self.Decoder = nn.Sequential(nn.Linear(in_features=self.z_dim, out_features=self.num_class))
 
