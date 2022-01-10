@@ -26,5 +26,6 @@ if HydrogenIB_attac_tag:
     HydrogenIB_fgsm(model, 0.1)
     HydrogenIB_fgsm(model, 0.2)
     HydrogenIB_fgsm(model, 0.3)
+    HydrogenIB_fgsm(model, 0.4)
 # if cnn_attack_tag:
 #     clean_CNN_foolbox_attack(cnn_model, 0.045)
