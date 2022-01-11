@@ -13,7 +13,7 @@ causalVGG_attac_tag = True
 normalVGG_attack_tag = True
 
 # betas = [0.1, 0.05, 0.02, 0.01, 0.005, 0.001, 0.0005]
-betas = [0.05, 0.01, 0.005]
+betas = [0.01]
 epsilon = [0.031, 0.045, 0.083]
 model = VGG_VIB(device=device).to(device)
 normal_model = NormalVGG(device=device).to(device)

@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 from torch.distributions.normal import Normal
 import matplotlib.pyplot as plt
 
@@ -21,81 +21,23 @@ class NormalVGG(nn.Module):
         self.batch_size = 100
         #self.prior = Normal(torch.zeros(1, self.z_dim).to(self.device), torch.ones(1, self.z_dim).to(self.device))
         # conv1
-        self.conv1_1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
-        self.relu1_1 = nn.ReLU(inplace=True)
-        self.conv1_2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        self.relu1_2 = nn.ReLU(inplace=True)
-        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv2
-        self.conv2_1 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.relu2_1 = nn.ReLU(inplace=True)
-        self.conv2_2 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
-        self.relu2_2 = nn.ReLU(inplace=True)
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv3 1/8
-        self.conv3_1 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        self.relu3_1 = nn.ReLU(inplace=True)
-        self.conv3_2 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
-        self.relu3_2 = nn.ReLU(inplace=True)
-        self.conv3_3 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
-        self.relu3_3 = nn.ReLU(inplace=True)
-        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv4 1/16
-        self.conv4_1 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
-        self.relu4_1 = nn.ReLU(inplace=True)
-        self.conv4_2 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu4_2 = nn.ReLU(inplace=True)
-        self.conv4_3 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu4_3 = nn.ReLU(inplace=True)
-        self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv5 1/32
-        self.conv5_1 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu5_1 = nn.ReLU(inplace=True)
-        self.conv5_2 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu5_2 = nn.ReLU(inplace=True)
-        self.conv5_3 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu5_3 = nn.ReLU(inplace=True)
-        self.pool5 = nn.MaxPool2d(kernel_size=2, stride=2)
+        net = models.vgg16(pretrained=True)
+        net.classifier = nn.Sequential()
+        self.features = net
 
         self.classifier = nn.Sequential(  # 定义自己的分类层
-            nn.Linear(in_features=512 * 1 * 1, out_features=256),  # 自定义网络输入后的大小。
+            nn.Linear(in_features=512 * 7 * 7, out_features=1024),  # 自定义网络输入后的大小。
             nn.ReLU(True),
             nn.Dropout(),
-            nn.Linear(in_features=256, out_features=256),
+            nn.Linear(in_features=1024, out_features=1024),
             nn.ReLU(True),
             nn.Dropout(),
-            nn.Linear(in_features=256, out_features=self.num_class)
+            nn.Linear(in_features=1024, out_features=self.num_class)
         )
 
 
     def forward(self, x):   # output: 32 * 32 * 3
-        x = self.relu1_1(self.conv1_1(x))
-        x = self.relu1_2(self.conv1_2(x))
-        x = self.pool1(x)
-
-        x = self.relu2_1(self.conv2_1(x))
-        x = self.relu2_2(self.conv2_2(x))
-        x = self.pool2(x)
-
-        x = self.relu3_1(self.conv3_1(x))
-        x = self.relu3_2(self.conv3_2(x))
-        x = self.relu3_3(self.conv3_3(x))
-        x = self.pool3(x)
-
-        x = self.relu4_1(self.conv4_1(x))
-        x = self.relu4_2(self.conv4_2(x))
-        x = self.relu4_3(self.conv4_3(x))
-        x = self.pool4(x)
-
-        x = self.relu5_1(self.conv5_1(x))
-        x = self.relu5_2(self.conv5_2(x))
-        x = self.relu5_3(self.conv5_3(x))
-        x = self.pool5(x)
-
+        x = self.features(x)
         x = x.view(x.size(0), -1)
         output = self.classifier(x)
         return output

@@ -76,12 +76,12 @@ def causalVGG_Train(beta, model, ema, num_epoch):
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
 
-            y_pre = model(x_batch)
+            y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
             y_prediction = torch.max(y_pre, dim=1)[1]
             accuracy = torch.mean((y_prediction == y_batch).float())
             accuracy_bei_epoch.append(accuracy.item())
 
-            loss, I_X_T, I_Y_T = model.batch_loss(x_batch, y_batch, num_samples=12)
+            loss, I_X_T, I_Y_T = model.train_batch_loss(logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples=12)
             loss_bei_epoch.append(loss.item())
             I_X_T_bei_epoch.append(I_X_T.item())
             I_Y_T_bei_epoch.append(I_Y_T.item())
@@ -97,10 +97,10 @@ def causalVGG_Train(beta, model, ema, num_epoch):
 
         # if(epoch%5 == 0):
         print("EPOCH: ", epoch, ", loss: ", np.mean(loss_bei_epoch), ", Accuracy: ", np.mean(accuracy_bei_epoch), ", I_X_T: ",  np.mean(I_X_T_bei_epoch), ", I_Y_T: ", np.mean(I_Y_T_bei_epoch))
-    save(model, str(beta)+"causalVGG")
+    save(model, str(beta)+"CifarCausalVGG")
 
 def causalVGG_eval(beta, model):
-    model = load(model, str(beta)+"causalVGG")
+    model = load(model, str(beta)+"CifarCausalVGG")
     model.eval()
     accuracy_ = []
     I_X_T_ = []

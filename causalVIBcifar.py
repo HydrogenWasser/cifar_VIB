@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 from torch.distributions.normal import Normal
 import matplotlib.pyplot as plt
 
@@ -35,50 +35,17 @@ class VGG_VIB(nn.Module):
         self.num_sample = 12
         self.device = device
         self.batch_size = 100
+        self.aug_weight = 0.9
+        self.w_ce = 1
+        self.w_reg = 0.1
+        self.train_flag = True
+        self.mask_center = [5, 16, 27]
         self.prior = Normal(torch.zeros(1, self.z_dim).to(self.device), torch.ones(1, self.z_dim).to(self.device))
-
-        # conv1
-        self.conv1_1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
-        self.relu1_1 = nn.ReLU(inplace=True)
-        self.conv1_2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        self.relu1_2 = nn.ReLU(inplace=True)
-        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv2
-        self.conv2_1 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.relu2_1 = nn.ReLU(inplace=True)
-        self.conv2_2 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
-        self.relu2_2 = nn.ReLU(inplace=True)
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv3 1/8
-        self.conv3_1 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        self.relu3_1 = nn.ReLU(inplace=True)
-        self.conv3_2 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
-        self.relu3_2 = nn.ReLU(inplace=True)
-        self.conv3_3 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
-        self.relu3_3 = nn.ReLU(inplace=True)
-        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv4 1/16
-        self.conv4_1 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
-        self.relu4_1 = nn.ReLU(inplace=True)
-        self.conv4_2 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu4_2 = nn.ReLU(inplace=True)
-        self.conv4_3 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu4_3 = nn.ReLU(inplace=True)
-        self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        # conv5 1/32
-        self.conv5_1 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu5_1 = nn.ReLU(inplace=True)
-        self.conv5_2 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu5_2 = nn.ReLU(inplace=True)
-        self.conv5_3 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
-        self.relu5_3 = nn.ReLU(inplace=True)
-        self.pool5 = nn.MaxPool2d(kernel_size=2, stride=2)
-
-        self.Encoder = nn.Sequential(nn.Linear(in_features=512, out_features=1024),
+        net = models.vgg16(pretrained=True)
+        net.classifier = nn.Sequential()
+        self.features = net
+        self.relu = nn.ReLU(inplace=True)
+        self.Encoder = nn.Sequential(nn.Linear(in_features=512*7*7, out_features=1024),
                                      nn.ReLU(),
                                      nn.Linear(in_features=1024, out_features=1024),
                                      nn.ReLU(),
@@ -88,29 +55,7 @@ class VGG_VIB(nn.Module):
 
 
     def pre_forward(self, x):   # output: 32 * 32 * 3
-        x = self.relu1_1(self.conv1_1(x))
-        x = self.relu1_2(self.conv1_2(x))
-        x = self.pool1(x)
-
-        x = self.relu2_1(self.conv2_1(x))
-        x = self.relu2_2(self.conv2_2(x))
-        x = self.pool2(x)
-
-        x = self.relu3_1(self.conv3_1(x))
-        x = self.relu3_2(self.conv3_2(x))
-        x = self.relu3_3(self.conv3_3(x))
-        x = self.pool3(x)
-
-        x = self.relu4_1(self.conv4_1(x))
-        x = self.relu4_2(self.conv4_2(x))
-        x = self.relu4_3(self.conv4_3(x))
-        x = self.pool4(x)
-
-        x = self.relu5_1(self.conv5_1(x))
-        x = self.relu5_2(self.conv5_2(x))
-        x = self.relu5_3(self.conv5_3(x))
-        x = self.pool5(x)
-
+        x = self.features(x)
         x = x.view(x.size(0), -1)
 
         return x
@@ -132,7 +77,7 @@ class VGG_VIB(nn.Module):
         x = self.pre_forward(x)
         mean_C, std_C = self.encoder_result(x)
         return mean_C, std_C, mean_C + std_C * self.gaussian_noise(num_samples=(num_samples, self.batch_size), K=self.z_dim)
-               # mean_S, std_S, mean_S + std_S * self.gaussian_noise(num_samples=(num_samples, batch_size), K=self.z_dim)
+        # mean_S, std_S, mean_S + std_S * self.gaussian_noise(num_samples=(num_samples, batch_size), K=self.z_dim)
 
     def get_logits(self, x):
         #encode
@@ -148,15 +93,68 @@ class VGG_VIB(nn.Module):
         # y_logits (12, 100, 10)
 
     def forward(self, x):
-        mean_C, std_C, y_logits, z_C = self.get_logits(x)
-        y_pre = torch.mean(y_logits, dim=0)
-        return y_pre
+        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = self.causal_forward(x)
+
+        return y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s
         # y_pre (100, 10)
 
-    def batch_loss(self, x_batch, y_batch, num_samples):
-        # compute I(X,T)
+    def causal_forward(self, x):
+        b, n, w, h = x.shape
+        samples = []
+        masks = []
+        NUM_LOOP = 9
+        NUM_INNER_SAMPLE = 3
+        NUM_TOTAL_SAMPLE = NUM_LOOP * NUM_INNER_SAMPLE
+
+        for i in range(NUM_TOTAL_SAMPLE):
+            sample = self.relu(x + x.detach().clone().uniform_(-1, 1) * self.aug_weight)
+            sample = sample / (sample + 1e-5)
+
+            if i % NUM_INNER_SAMPLE == 0:
+                idx = int(i // NUM_INNER_SAMPLE)
+                x_idx = int(idx // 3)
+                y_idx = int(idx % 3)
+                center_x = self.mask_center[x_idx]
+                center_y = self.mask_center[y_idx]
+
+            mask = self.create_mask(w, h, center_x, center_y, alpha=10.0).to(x.device)
+            sample = sample * mask.float()
+            samples.append(sample)
+            masks.append(mask)
+
+        outputs = []
+        features = []
+        z_scores = []
+        mean_Cs = []
+        std_Cs = []
+        y_logits_s = []
+
+        for i in range(NUM_LOOP):
+            # Normalized input
+            inputs = sum(samples[NUM_INNER_SAMPLE * i : NUM_INNER_SAMPLE * (i+1)]) / NUM_INNER_SAMPLE
+            z_score = (sum(masks[NUM_INNER_SAMPLE * i : NUM_INNER_SAMPLE * (i+1)]).float() / NUM_INNER_SAMPLE).mean()
+            # forward modules
+
+            mean_C, std_C, y_logits, z_C = self.get_logits(inputs)
+            y_pre = torch.mean(y_logits, dim=0)
+            # z_C (100, 128)
+            # y_pre (100, 10)
+            feats = z_C
+            preds = y_pre
+
+            z_scores.append(z_score.view(1,1).repeat(b, 1))
+            features.append(feats)
+            outputs.append(preds)
+            mean_Cs.append(mean_C)
+            std_Cs.append(std_C)
+            y_logits_s.append(y_logits)
+        final_pred = sum([pred / (z + 1e-9) for pred, z in zip(outputs, z_scores)]) / NUM_LOOP
+
+        return final_pred, z_scores, features, outputs, mean_Cs, std_Cs, y_logits_s
+
+
+    def compute_IB_loss(self, mean, std, y_logits, y_batch, num_samples):
         prior_Z_distr = torch.zeros(self.batch_size, self.z_dim).to(self.device), torch.ones(self.batch_size, self.z_dim).to(self.device)
-        mean, std, y_logits, z_C =  self.get_logits(x_batch)
         enc_dist = mean, std
         I_X_T_bound = torch.mean(KL_between_normals(enc_dist, prior_Z_distr)) / math.log(2)
 
@@ -169,11 +167,61 @@ class VGG_VIB(nn.Module):
         cross_entropy_loss_montecarlo = torch.mean(cross_entropy_loss, dim=-1)
         I_Y_T_bound = torch.mean(cross_entropy_loss_montecarlo, dim=0) / math.log(2)
 
-
         # compute Loss
-        loss = I_Y_T_bound + self.beta*I_X_T_bound
+        Ibloss = I_Y_T_bound + self.beta*I_X_T_bound
+        return Ibloss, I_X_T_bound, math.log(10, 2) - I_Y_T_bound
 
-        return loss, I_X_T_bound, math.log(10, 2) - I_Y_T_bound
+
+    def train_batch_loss(self, logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples):
+
+        all_Ibloss = []
+        all_regs = []
+        all_I_XT = []
+        all_I_YT = []
+
+        for i in range(len(logits)):
+
+            mean = mean_Cs[i]
+            std = std_Cs[i]
+            y_logits = y_logits_s[i]
+            Ibloss, I_X_T_bound, I_Y_T_bound = self.compute_IB_loss(mean, std, y_logits, y_batch, num_samples)
+
+            all_Ibloss.append(Ibloss)
+            all_I_XT.append(I_X_T_bound)
+            all_I_YT.append(I_Y_T_bound)
+
+        for i in range(len(features)):
+            reg_loss = self.smooth_l1_loss(features[i] * self.get_mean_wo_i(z_scores, i),
+                                           self.get_mean_wo_i(features, i) * z_scores[i])
+            # iter_info_print['ciiv_l1loss_{}'.format(i)] = reg_loss.sum().item()
+            all_regs.append(reg_loss)
+
+        loss = self.w_ce * sum(all_Ibloss) / len(all_Ibloss) + self.w_reg * sum(all_regs) / len(all_regs)
+        I_XT = sum(all_I_XT) / len(all_I_XT)
+        I_YT = sum(all_I_YT) / len(all_I_YT)
+
+        return loss, I_XT, I_YT
+
+    def smooth_l1_loss(self, x, y):
+        diff = F.smooth_l1_loss(x, y, reduction='none')
+        diff = diff.sum(1)
+        diff = diff.mean(0)
+        return diff
+
+    def get_mean_wo_i(self, inputs, i):
+        return (sum(inputs) - inputs[i]) / float(len(inputs) - 1)
+
+    def create_mask(self, w, h, center_x, center_y, alpha=10.0):
+        widths = torch.arange(w).view(1, -1).repeat(h, 1)
+        heights = torch.arange(h).view(-1, 1).repeat(1, w)
+        mask = ((widths - center_x)**2 + (heights - center_y)**2).float().sqrt()
+
+        mask = (mask.max() - mask + alpha) ** 0.3
+        mask = mask / mask.max()
+        mask = (mask + mask.clone().uniform_(0, 1)) > 0.9
+        mask.float()
+
+        return mask.unsqueeze(0)
 
     def give_beta(self, beta):
         self.beta = beta
