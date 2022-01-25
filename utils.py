@@ -6,7 +6,8 @@ from torchvision import datasets, transforms
 import torchvision
 from torch.utils.data import TensorDataset, Dataset, DataLoader
 from causalVIBcifar import *
-from NormalVGG import *
+from resnet_IB import *
+from resnet import *
 import numpy as np
 import fgsm
 
@@ -15,7 +16,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 "                                                     "
 "               Daten Vorbereitung                    "
 "                                                     "
-batch_size = 50
+batch_size = 100
 
 data_transform = {
     "train": transforms.Compose([transforms.RandomResizedCrop(224),
@@ -31,7 +32,7 @@ data_transform = {
 trainset = torchvision.datasets.CIFAR10('data', train=True, download=False,
                                         transform=data_transform["train"])
 
-trainloader = DataLoader(dataset=trainset,
+train_loader = DataLoader(dataset=trainset,
                               batch_size=batch_size,
                               shuffle=True,
                               num_workers=0)
@@ -41,7 +42,7 @@ testset = torchvision.datasets.CIFAR10('data',
                                        train=False,
                                        download=False,
                                        transform=data_transform["val"])
-testloader = DataLoader(dataset=testset,
+test_loader = DataLoader(dataset=testset,
                              batch_size=batch_size,
                              shuffle=False,
                              num_workers=0)
@@ -71,11 +72,10 @@ def load(net, name):
 "                                                     "
 "               Modell Trainierung                    "
 "                                                     "
-def causalVGG_Train(beta, model, ema, num_epoch):
+def resnetIB_Train(model, ema, num_epoch):
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
-    model.give_beta(beta)
 
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -94,12 +94,12 @@ def causalVGG_Train(beta, model, ema, num_epoch):
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
 
-            y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
+            y_pre = model(x_batch)
             y_prediction = torch.max(y_pre, dim=1)[1]
             accuracy = torch.mean((y_prediction == y_batch).float())
             accuracy_bei_epoch.append(accuracy.item())
             # print(accuracy)
-            loss, I_X_T, I_Y_T = model.train_batch_loss(logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples=12)
+            loss, I_X_T, I_Y_T = model.batch_loss(x_batch, y_batch, num_samples=12)
             loss_bei_epoch.append(loss.item())
             I_X_T_bei_epoch.append(I_X_T.item())
             I_Y_T_bei_epoch.append(I_Y_T.item())
@@ -114,10 +114,10 @@ def causalVGG_Train(beta, model, ema, num_epoch):
 
         # if(epoch%5 == 0):
         print("EPOCH: ", epoch, ", loss: ", np.mean(loss_bei_epoch), ", Accuracy: ", np.mean(accuracy_bei_epoch), ", I_X_T: ",  np.mean(I_X_T_bei_epoch), ", I_Y_T: ", np.mean(I_Y_T_bei_epoch))
-    save(model, str(beta)+"CifarCausalVGG")
+    save(model, "ResnetIB")
 
-def causalVGG_eval(beta, model):
-    model = load(model, str(beta)+"CifarCausalVGG")
+def resnetIB_eval(model):
+    model = load(model, "ResnetIB")
     model.eval()
     accuracy_ = []
     I_X_T_ = []
@@ -127,24 +127,19 @@ def causalVGG_eval(beta, model):
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
 
-        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
-        loss, I_X_T, I_Y_T = model.train_batch_loss(logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples=12)
-        I_X_T_.append(I_X_T.item())
-        I_Y_T_.append(I_Y_T.item())
-
+        y_pre = model(x_batch)
         y_prediction = torch.max(y_pre, dim=1)[1]
         accuracy = torch.mean((y_prediction == y_batch).float())
         accuracy_.append(accuracy.item())
 
 
     # if(epoch%5 == 0):
-    print("TEST, Accuracy: ", np.mean(accuracy_), ", I_X_T: ",  np.mean(I_X_T_), ", I_Y_T: ", np.mean(I_Y_T_))
+    print("TEST, Accuracy: ", np.mean(accuracy_))
 
-def NormalVGG_Train(model, ema, num_epoch):
+def resnet_Train(model, ema, num_epoch):
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
-
 
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -179,10 +174,10 @@ def NormalVGG_Train(model, ema, num_epoch):
 
         # if(epoch%5 == 0):
         print("EPOCH: ", epoch, ", loss: ", np.mean(loss_bei_epoch), ", Accuracy: ", np.mean(accuracy_bei_epoch))
-    save(model, "NormalVGG")
-
+    save(model, "normalResnet")
+#
 def NormalVGG_eval(model):
-    model = load(model,"NormalVGG")
+    model = load(model, "normalResnet")
     model.eval()
     accuracy_ = []
 
@@ -211,14 +206,14 @@ def causalVGG_adver(beta, model, epsilon):
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
 
-        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
+        y_pre = model(x_batch)
         y_prediction = torch.max(y_pre, dim=1)[1]
         accuracy = torch.mean((y_prediction == y_batch).float())
         accuracy_clean.append(accuracy.item())
 
         perturbed_x_batch = adver_image_obtain.generate(x_batch, eps=epsilon, y=y_batch)
 
-        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(perturbed_x_batch)
+        y_pre = model(perturbed_x_batch)
         y_prediction = torch.max(y_pre, dim=1)[1]
         accuracy = torch.mean((y_prediction == y_batch).float())
         accuracy_adver.append(accuracy.item())
