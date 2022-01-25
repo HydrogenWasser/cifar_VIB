@@ -6,6 +6,7 @@ samples_amount = 10
 
 class attack_model(nn.Module):
     def __init__(self, model):
+        self.is_causal = False
         super().__init__()
         self.model = model
         self.device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
@@ -32,7 +33,10 @@ class attack_model(nn.Module):
         # get the gradient of x
         x_new = Variable(x_new, requires_grad=True)
         loss_func = nn.CrossEntropyLoss()
-        preds = self.model(x_new)
+        if self.is_causal:
+            preds, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = self.model(x_new)
+        else:
+            preds = self.model(x_new)
 
         loss = loss_func(preds, labels)
         self.model.zero_grad()

@@ -1,43 +1,53 @@
-import math, random
+from torch import nn
+import os
 import torch
-import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
-from torch.distributions.normal import Normal
-import matplotlib.pyplot as plt
-from torchvision.datasets import MNIST
+import torchvision
 from torch.utils.data import TensorDataset, Dataset, DataLoader
-import matplotlib as plt
-from HydrogenIB import *
-from Clean_CNN import *
-import os
+from causalVIBcifar import *
+from NormalVGG import *
+import numpy as np
 import fgsm
-os.environ["GIT_PYTHON_REFRESH"] = "quiet"
-
-
-
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-batch_size = 100
-samples_amount = 12
-
 
 "                                                     "
 "               Daten Vorbereitung                    "
 "                                                     "
+batch_size = 50
 
-train_data = MNIST('./data', download=True, train=True)
-train_dataset = TensorDataset(train_data.train_data.view(-1, 28*28).float() / 255, train_data.train_labels)
-train_loader = DataLoader(train_dataset, batch_size=batch_size)
+data_transform = {
+    "train": transforms.Compose([transforms.RandomResizedCrop(224),
+                                 transforms.RandomHorizontalFlip(),
+                                 transforms.ToTensor(),
+                                 transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]),
+    "val": transforms.Compose([transforms.Resize(256),
+                               transforms.CenterCrop(224),
+                               transforms.ToTensor(),
+                               transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])}
 
+# load train data
+trainset = torchvision.datasets.CIFAR10('data', train=True, download=False,
+                                        transform=data_transform["train"])
 
-test_data = MNIST('./data', download=True, train=False)
-test_dataset = TensorDataset(test_data.test_data.view(-1, 28*28).float() / 255, test_data.test_labels)
-test_loader = DataLoader(test_dataset, batch_size=batch_size)
+trainloader = DataLoader(dataset=trainset,
+                              batch_size=batch_size,
+                              shuffle=True,
+                              num_workers=0)
 
+# load test data
+testset = torchvision.datasets.CIFAR10('data',
+                                       train=False,
+                                       download=False,
+                                       transform=data_transform["val"])
+testloader = DataLoader(dataset=testset,
+                             batch_size=batch_size,
+                             shuffle=False,
+                             num_workers=0)
+
+classes = ('plane', 'car', 'bird', 'cat',
+           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 "                                                     "
 "               Modell Speichung                      "
@@ -61,12 +71,11 @@ def load(net, name):
 "                                                     "
 "               Modell Trainierung                    "
 "                                                     "
-
-def HydrogenIB_Train(model, ema, num_epoch):
+def causalVGG_Train(beta, model, ema, num_epoch):
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
-
+    model.give_beta(beta)
 
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -85,12 +94,12 @@ def HydrogenIB_Train(model, ema, num_epoch):
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
 
-            y_pre, z_C = model(x_batch)
+            y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
             y_prediction = torch.max(y_pre, dim=1)[1]
             accuracy = torch.mean((y_prediction == y_batch).float())
             accuracy_bei_epoch.append(accuracy.item())
-
-            loss, I_X_T, I_Y_T = model.batch_loss(x_batch, y_batch, num_samples=12)
+            # print(accuracy)
+            loss, I_X_T, I_Y_T = model.train_batch_loss(logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples=12)
             loss_bei_epoch.append(loss.item())
             I_X_T_bei_epoch.append(I_X_T.item())
             I_Y_T_bei_epoch.append(I_Y_T.item())
@@ -103,13 +112,12 @@ def HydrogenIB_Train(model, ema, num_epoch):
                 if (param.requires_grad):
                     ema(name, param.data)
 
-
         # if(epoch%5 == 0):
         print("EPOCH: ", epoch, ", loss: ", np.mean(loss_bei_epoch), ", Accuracy: ", np.mean(accuracy_bei_epoch), ", I_X_T: ",  np.mean(I_X_T_bei_epoch), ", I_Y_T: ", np.mean(I_Y_T_bei_epoch))
-    save(model, "HydrogenIB")
+    save(model, str(beta)+"CifarCausalVGG")
 
-def HydrogenIB_eval(model):
-    model = load(model, "HydrogenIB")
+def causalVGG_eval(beta, model):
+    model = load(model, str(beta)+"CifarCausalVGG")
     model.eval()
     accuracy_ = []
     I_X_T_ = []
@@ -119,9 +127,8 @@ def HydrogenIB_eval(model):
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
 
-        mean, std, y_logits = model.get_logits(x_batch)
-        y_pre, z_C = model(x_batch)
-        loss, I_X_T, I_Y_T = model.batch_loss(x_batch, y_batch, num_samples=12)
+        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
+        loss, I_X_T, I_Y_T = model.train_batch_loss(logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples=12)
         I_X_T_.append(I_X_T.item())
         I_Y_T_.append(I_Y_T.item())
 
@@ -133,60 +140,114 @@ def HydrogenIB_eval(model):
     # if(epoch%5 == 0):
     print("TEST, Accuracy: ", np.mean(accuracy_), ", I_X_T: ",  np.mean(I_X_T_), ", I_Y_T: ", np.mean(I_Y_T_))
 
-def HydrogenIB_fgsm(model, epsilon):
-    model = load(model, "HydrogenIB")
-    model.eval()
-    adver_image_obtain = fgsm.attack_model(model=model)
-    accuracy_clean = []
-    accuracy_adver = []
-    # fuck = 0
-    for x_batch, y_batch in test_loader:
-
-        x_batch = x_batch.to(device)
-        y_batch = y_batch.to(device)
-        y_pre, z_C = model(x_batch)
-        y_prediction = torch.max(y_pre, dim=1)[1]
-        accuracy = torch.mean((y_prediction == y_batch).float())
-        accuracy_clean.append(accuracy.item())
-
-
-        perturbed_x_batch = adver_image_obtain.generate(x_batch, eps=epsilon, y=y_batch)
-
-        y_pre, z_C = model(perturbed_x_batch)
-        y_prediction = torch.max(y_pre, dim=1)[1]
-        accuracy = torch.mean((y_prediction == y_batch).float())
-        accuracy_adver.append(accuracy.item())
-
-
-    # if(epoch%5 == 0):
-    print("TEST, Clean Accuracy: ", np.mean(accuracy_clean), ", Adversial Accuracy: ",  np.mean(accuracy_adver))
-
-def Clean_CNN_Train(model, num_epoch):
+def NormalVGG_Train(model, ema, num_epoch):
 
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
+
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            ema.register(name, param.data)
 
     for epoch in range(num_epoch):
         loss_bei_epoch = []
         accuracy_bei_epoch = []
+
+        if epoch % 2 == 0 and epoch > 0:
+            scheduler.step()
 
         for x_batch, y_batch in train_loader:
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
 
             y_pre = model(x_batch)
-            loss = model.batch_loss(y_pre, y_batch)
-            loss_bei_epoch.append(loss.item())
-
             y_prediction = torch.max(y_pre, dim=1)[1]
             accuracy = torch.mean((y_prediction == y_batch).float())
             accuracy_bei_epoch.append(accuracy.item())
+
+            loss = model.batch_loss(y_pre, y_batch)
+            loss_bei_epoch.append(loss.item())
+
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
+            for name, param in model.named_parameters():
+                if (param.requires_grad):
+                    ema(name, param.data)
+
         # if(epoch%5 == 0):
         print("EPOCH: ", epoch, ", loss: ", np.mean(loss_bei_epoch), ", Accuracy: ", np.mean(accuracy_bei_epoch))
-    save(model, "CNN")
+    save(model, "NormalVGG")
+
+def NormalVGG_eval(model):
+    model = load(model,"NormalVGG")
+    model.eval()
+    accuracy_ = []
+
+    for x_batch, y_batch in test_loader:
+        x_batch = x_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        y_pre= model(x_batch)
+
+        y_prediction = torch.max(y_pre, dim=1)[1]
+        accuracy = torch.mean((y_prediction == y_batch).float())
+        accuracy_.append(accuracy.item())
 
 
+    # if(epoch%5 == 0):
+    print("TEST, Accuracy: ", np.mean(accuracy_))
 
+def causalVGG_adver(beta, model, epsilon):
+    model = load(model, str(beta)+"causalVGG")
+    model.eval()
+    adver_image_obtain = fgsm.attack_model(model=model)
+    adver_image_obtain.is_causal = True
+    accuracy_clean = []
+    accuracy_adver = []
+    for x_batch, y_batch in test_loader:
+        x_batch = x_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
+        y_prediction = torch.max(y_pre, dim=1)[1]
+        accuracy = torch.mean((y_prediction == y_batch).float())
+        accuracy_clean.append(accuracy.item())
+
+        perturbed_x_batch = adver_image_obtain.generate(x_batch, eps=epsilon, y=y_batch)
+
+        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(perturbed_x_batch)
+        y_prediction = torch.max(y_pre, dim=1)[1]
+        accuracy = torch.mean((y_prediction == y_batch).float())
+        accuracy_adver.append(accuracy.item())
+
+    # if(epoch%5 == 0):
+    print("TEST, epsilon: ", epsilon, " Clean Accuracy: ", np.mean(accuracy_clean), ", Adversial Accuracy: ",  np.mean(accuracy_adver))
+
+def normalVGG_adver(model, epsilon):
+    model = load(model, "NormalVGG")
+    model.eval()
+    adver_image_obtain = fgsm.attack_model(model=model)
+    adver_image_obtain.is_causal = False
+    accuracy_clean = []
+    accuracy_adver = []
+    for x_batch, y_batch in test_loader:
+        x_batch = x_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        y_pre = model(x_batch)
+        y_prediction = torch.max(y_pre, dim=1)[1]
+        accuracy = torch.mean((y_prediction == y_batch).float())
+        accuracy_clean.append(accuracy.item())
+
+        perturbed_x_batch = adver_image_obtain.generate(x_batch, eps=epsilon, y=y_batch)
+
+        y_pre = model(perturbed_x_batch)
+        y_prediction = torch.max(y_pre, dim=1)[1]
+        accuracy = torch.mean((y_prediction == y_batch).float())
+        accuracy_adver.append(accuracy.item())
+
+    # if(epoch%5 == 0):
+    print("TEST, Clean Accuracy: ", np.mean(accuracy_clean), ", Adversial Accuracy: ",  np.mean(accuracy_adver))

@@ -196,6 +196,7 @@ class VGG_VIB(nn.Module):
             # iter_info_print['ciiv_l1loss_{}'.format(i)] = reg_loss.sum().item()
             all_regs.append(reg_loss)
 
+        # print(sum(all_Ibloss)/len(all_Ibloss), "--", sum(all_regs) / len(all_regs))
         loss = self.w_ce * sum(all_Ibloss) / len(all_Ibloss) + self.w_reg * sum(all_regs) / len(all_regs)
         I_XT = sum(all_I_XT) / len(all_I_XT)
         I_YT = sum(all_I_YT) / len(all_I_YT)

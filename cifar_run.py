@@ -8,9 +8,9 @@ from cifar_utils import *
 
 num_epoch = 200
 causalVGG_train_tag = True
-normalVGG_trian_tag = True
+normalVGG_trian_tag = False
 causalVGG_attac_tag = True
-normalVGG_attack_tag = True
+normalVGG_attack_tag = False
 
 # betas = [0.1, 0.05, 0.02, 0.01, 0.005, 0.001, 0.0005]
 betas = [0.01]
@@ -24,7 +24,7 @@ if causalVGG_train_tag:
     for beta in betas:
         print("---------", beta, "------------")
         causalVGG_Train(beta, model, ema, num_epoch)
-        causalVGG_eval(beta, model)
+
 
 if normalVGG_trian_tag:
     NormalVGG_Train(normal_model,normalEma, num_epoch)
@@ -34,6 +34,7 @@ if causalVGG_attac_tag:
     for beta in betas:
         print("---------", beta, "------------")
         for eps in epsilon:
+            causalVGG_eval(beta, model)
             causalVGG_adver(beta, model, eps)
 if normalVGG_attack_tag:
     NormalVGG_eval(normal_model)

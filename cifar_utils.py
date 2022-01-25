@@ -80,7 +80,7 @@ def causalVGG_Train(beta, model, ema, num_epoch):
             y_prediction = torch.max(y_pre, dim=1)[1]
             accuracy = torch.mean((y_prediction == y_batch).float())
             accuracy_bei_epoch.append(accuracy.item())
-
+            # print(accuracy)
             loss, I_X_T, I_Y_T = model.train_batch_loss(logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples=12)
             loss_bei_epoch.append(loss.item())
             I_X_T_bei_epoch.append(I_X_T.item())
@@ -93,7 +93,6 @@ def causalVGG_Train(beta, model, ema, num_epoch):
             for name, param in model.named_parameters():
                 if (param.requires_grad):
                     ema(name, param.data)
-
 
         # if(epoch%5 == 0):
         print("EPOCH: ", epoch, ", loss: ", np.mean(loss_bei_epoch), ", Accuracy: ", np.mean(accuracy_bei_epoch), ", I_X_T: ",  np.mean(I_X_T_bei_epoch), ", I_Y_T: ", np.mean(I_Y_T_bei_epoch))
@@ -110,8 +109,8 @@ def causalVGG_eval(beta, model):
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
 
-        y_pre = model(x_batch)
-        loss, I_X_T, I_Y_T = model.batch_loss(x_batch, y_batch, num_samples=12)
+        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
+        loss, I_X_T, I_Y_T = model.train_batch_loss(logits, features, z_scores, y_logits_s, mean_Cs, std_Cs, y_batch, num_samples=12)
         I_X_T_.append(I_X_T.item())
         I_Y_T_.append(I_Y_T.item())
 
@@ -160,7 +159,6 @@ def NormalVGG_Train(model, ema, num_epoch):
                 if (param.requires_grad):
                     ema(name, param.data)
 
-
         # if(epoch%5 == 0):
         print("EPOCH: ", epoch, ", loss: ", np.mean(loss_bei_epoch), ", Accuracy: ", np.mean(accuracy_bei_epoch))
     save(model, "NormalVGG")
@@ -188,20 +186,21 @@ def causalVGG_adver(beta, model, epsilon):
     model = load(model, str(beta)+"causalVGG")
     model.eval()
     adver_image_obtain = fgsm.attack_model(model=model)
+    adver_image_obtain.is_causal = True
     accuracy_clean = []
     accuracy_adver = []
     for x_batch, y_batch in test_loader:
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
 
-        y_pre = model(x_batch)
+        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(x_batch)
         y_prediction = torch.max(y_pre, dim=1)[1]
         accuracy = torch.mean((y_prediction == y_batch).float())
         accuracy_clean.append(accuracy.item())
 
         perturbed_x_batch = adver_image_obtain.generate(x_batch, eps=epsilon, y=y_batch)
 
-        y_pre = model(perturbed_x_batch)
+        y_pre, z_scores, features, logits, mean_Cs, std_Cs, y_logits_s = model(perturbed_x_batch)
         y_prediction = torch.max(y_pre, dim=1)[1]
         accuracy = torch.mean((y_prediction == y_batch).float())
         accuracy_adver.append(accuracy.item())
@@ -213,6 +212,7 @@ def normalVGG_adver(model, epsilon):
     model = load(model, "NormalVGG")
     model.eval()
     adver_image_obtain = fgsm.attack_model(model=model)
+    adver_image_obtain.is_causal = False
     accuracy_clean = []
     accuracy_adver = []
     for x_batch, y_batch in test_loader:
